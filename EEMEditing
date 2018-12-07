@@ -1,0 +1,31 @@
+#Editing EEMs
+
+library(EEM)
+
+filelist <- list.files("./Data/EEMs")
+
+edit.EEM <- function(filelist){
+
+  for (i in 1:length(filelist)){
+    
+    file <- read.csv(paste0("./Data/EEMs/", filelist[i]), header = F)
+    em <- as.numeric(paste(file[4:nrow(file),1]))
+    data <- file[4:nrow(file),2:length(file)]
+    newdata <- NULL
+    
+    for (j in 1:nrow(data)) {
+      x <- cbind(em[j], data[j,])
+      newdata <- rbind(newdata, x)
+    }
+    
+    header <- c("Data Points", rep("", times = ncol(data)))
+    ex <- as.numeric(paste(file[1,]))
+    a <- rbind(header, ex)
+    final <- rbind(a, as.matrix(newdata))
+    final <- as.data.frame(final)
+    final[2,1] <- ""
+    write.csv(final, file = paste0("./Data/EEMsEdited/", filelist[i]), row.names = F, col.names = NA)
+  }
+}
+
+edit.EEM(filelist = filelist)
