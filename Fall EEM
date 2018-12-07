@@ -1,0 +1,126 @@
+#### Analyzing EEMs with Partial Least Squares Regression ####
+
+library(EEM)
+library(pls)
+library(ggplot2)
+
+#Set PLSR algorithm
+pls.options(plsralg = "simpls")
+
+#### Import EEM Data ####
+EEMs <- readEEM("./Data/EEMsEdited/Fall")
+# EEMs stored as separate .csv files stored in a folder inside the working directory named: EEM Files
+# The order of files in the folder must match sample order in the dataset
+# See help(readEEM) for data types that can be read
+
+summary(EEMs)
+# Verify the number of samples, EX and EM ranges, and data dimensions
+
+#### Import Other Data ####
+Other_Data <- read.csv("Other_Data.csv", header=T, sep=",")
+# Order of samples in Other_Data.csv should be in same order as EEMs inside the EEM Files folder
+
+head(Other_Data)
+
+#### Cut Ex/EM ranges ####
+EEMs <- cutEEM(EEMs, cutEX = 452:800, cutEM = 600:826)
+# Cuts values that appear within each given range, used to trim to dimensions of interest for analysis
+
+#### Remove Scattering ####
+EEMs_del <- delScattering2(EEMs, rep=0, first = 35, second = 10)
+# See help(delScattering2) to see options for different scattering removal options
+
+#Check to see what it looks like
+drawEEM(EEMs_del, n = 1)
+
+summary(EEMs_del)
+
+#### Unfold Data for PLSR Analysis ####
+EEMs_unfold <- unfold(EEMs_del)
+# Takes 3D EEMs and creates a 2D matrix where each EX/EM pair is a column and each sample is a row
+
+#### Normalize Data ####
+EEMs_norm <- normalize(EEMs_unfold)
+# Divides each column by the sum of the absolute values of each row. This reduces 
+# scaling differences between different EEMs
+
+rowSums(abs(EEMs_norm))
+# Verify that each sample (row) sums to 1
+
+#### Append unfolded EEMs to Other_Data ####
+Other_Data$EEMs <- EEMs_norm
+# Sample order must be equivalent for EEMs and Other data 
+
+#### Subset data into training and testing sets ####
+set.seed(999)
+sample <- sample.int(n = nrow(Other_Data), size = floor(0.7*nrow(Other_Data)))
+Training_Data <- Other_Data[sample, ]
+Test_Data <- Other_Data[-sample, ]
+
+#### Partial Least Squares Regression Model: Variable ~ EEMs ####
+# Predict values for a variable using EEMs
+# NAs are not accepted by the pls algorithm
+
+#Model Fit
+Variable_EEMs_pls <- plsr(Variable ~ EEMs, ncomp=25, data=Training_Data, validation="CV")
+summary(Variable_EEMs_pls)
+
+# Select appropriate number of components/latent variables
+plot(RMSEP(Variable_EEMs_pls), legendpos="topright") # select a local minima or absolute minimum
+validationplot(Variable_EEMs_pls, val.type="R2")
+
+selectNcomp(Variable_EEMs_pls, method = "onesigma", plot = TRUE)
+selectNcomp(Variable_EEMs_pls, method = "randomization", plot = TRUE)
+# Suggests optimal number of components using cross-validation results
+# See help(selectNcomp) for details
+
+#### Visualize fit for validation dataset ####
+Training_Data$Variable_Pred <- Variable_EEMs_pls$validation$pred[,,ncomp=N]
+Variable_Validation_Predplot <- ggplot(Training_Data, aes(x = Variable, y=Variable_Pred, colour=Group)) +
+  geom_point(size=2) +
+  geom_abline(slope = 1, intercept = 0) +
+  scale_x_continuous(name = "Measured (units)") +
+  scale_y_continuous(name = "Predicted (units)") +
+  theme_bw() +
+  theme(plot.title = element_text(size=14, face="bold", hjust=0.5),
+        text = element_text(size=12),
+        axis.title = element_text(face="bold"),
+        axis.text.x = element_text(size=12, color="black"),
+        axis.text.y = element_text(size=12, color="black"),
+        legend.position = "bottom") +
+  labs(colour = "") +
+  guides(colour = F)
+Variable_Validation_Predplot
+ggsave("Variable Validation Predplot.png", Var_Validation_Predplot, height = 3.75, width = 5.5, units = "in", dpi = 300)
+
+#### Identify important regions of EEMs for predicting response ####
+png("Variable Coefficients.png", res=300, width=5.5, height=5, units="in")
+Variable_Reg_Coef <- plotReg(Variable_EEMs_pls, ncomp=N, flipaxis=F)
+dev.off()
+
+#### Visualize fit for test dataset ####
+Test_Data$Variable_Pred <- predict(Variable_EEMs_pls, ncomp=N, newdata=Test_Data)
+Variable_Test_Predplot <- ggplot(Test_Data, aes(x = Variable, y=Variable_Pred, colour=Group)) +
+  geom_point(size=2) +
+  geom_abline(slope = 1, intercept = 0) +
+  scale_x_continuous(name = "Measured (units)") +
+  scale_y_continuous(name = "Predicted (units)") +
+  theme_bw() +
+  theme(plot.title = element_text(size=14, face="bold", hjust=0.5),
+        text = element_text(size=12),
+        axis.title = element_text(face="bold"),
+        axis.text.x = element_text(size=12, color="black"),
+        axis.text.y = element_text(size=12, color="black"),
+        legend.position = "bottom") +
+  labs(colour = "")
+Variable_Test_Predplot
+ggsave("Variable Test Predplot.png", Variable_Test_Predplot, height = 4.675, width = 5.5, units = "in", dpi = 300)
+
+#### Calculate Summary Statistics ####
+RMSEP(Variable_EEMs_pls, ncomp=N) # Training set root mean square error of prediction
+MAPE(predict(Variable_EEMs_pls, ncomp=N), Training_Data$Variable) # Training set mean absolute percentage error
+MedianAPE(predict(Variable_EEMs_pls, ncomp=N), Training_Data$Variable) # Training set median absolute percentage error
+MAPE(predict(Variable_EEMs_pls, ncomp=N, newdata=Test_Data), Test_Data$Variable) # Test set mean absolute percentage error
+MedianAPE(predict(Variable_EEMs_pls, ncomp=N, newdata=Test_Data), Test_Data$Variable) # Test set median absolute percentage error
+R2(Variable_EEMs_pls, ncomp=N, newdata=Test_Data, estimate="all") # Training, cross-validation, and test set R^2
+
